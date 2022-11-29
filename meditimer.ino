@@ -45,8 +45,9 @@ void setup() {
   display.setTextColor(SSD1306_WHITE, SSD1306_BLACK); // Draw white text
   display.cp437(true);         // Use full 256 char 'Code Page 437' font
 
-  updateScreen();
   start_time = seconds();
+  updateScreen();
+
   while (true) {
     loop();
   }
@@ -65,9 +66,9 @@ void updateScreen() {
 
   display.setCursor(50, 0);
   if (meditationEnded) {
-    display.write("START");
-  } else {
     display.write("END  ");
+  } else {
+    display.write("START");
   }
 
   display.display();
@@ -107,28 +108,28 @@ void endOfMeditation() {
   }
 }
 
-bool debounce(uint8_t pin, unsigned int * acc) {
+bool debounce(uint8_t pin, unsigned int &acc) {
   if (digitalRead(pin)) {
-    if (*acc == DEBOUNCE_COUNT) {
-      *acc ++;
+    if (acc == DEBOUNCE_COUNT) {
+      acc ++;
       return true;
     }
-    if (*acc < DEBOUNCE_COUNT) {
-      *acc ++;
+    if (acc < DEBOUNCE_COUNT) {
+      acc ++;
     }
   } else {
-    *acc = 0;
+    acc = 0;
   }
   return false;
 }
 
 void loop() {
   int newval = val;
-  if (debounce(PIN_INCTIME, &acc_addtime)) {
+  if (debounce(PIN_INCTIME, acc_addtime)) {
       newval += 5;
   }
 
-  if(debounce(PIN_RESTART, &acc_restart)) {
+  if(debounce(PIN_RESTART, acc_restart)) {
       start_time = seconds() / 1000;
   }
 
