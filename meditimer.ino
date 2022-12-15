@@ -16,17 +16,20 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 int PIN_INCTIME = 3;
 int PIN_RESTART = 2;
-int DEBOUNCE_COUNT = 2000;
+unsigned int DEBOUNCE_COUNT = 2000;
 
 unsigned char val = 5;
 unsigned int acc_addtime = 0;
 unsigned int acc_restart = 0;
 
-long int start_time = 0;
+typedef unsigned long int time;
+
+time start_time = 0;
 bool meditationEnded = true;
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
+  Serial.println(F("Meditimer Startup"));
 
   // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
   if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
@@ -53,7 +56,7 @@ void setup() {
   }
 }
 
-long int seconds() {
+time seconds() {
   return millis() / 1000;
 }
 
@@ -109,7 +112,7 @@ void endOfMeditation() {
 }
 
 bool debounce(uint8_t pin, unsigned int &acc) {
-  if (digitalRead(pin)) {
+  if (!digitalRead(pin)) {
     if (acc == DEBOUNCE_COUNT) {
       acc ++;
       return true;
@@ -124,17 +127,23 @@ bool debounce(uint8_t pin, unsigned int &acc) {
 }
 
 void loop() {
-  int newval = val;
+  unsigned char newval = val;
   if (debounce(PIN_INCTIME, acc_addtime)) {
+      Serial.println("PIN_INCTIME FIRED");
       newval += 5;
   }
 
   if(debounce(PIN_RESTART, acc_restart)) {
-      start_time = seconds() / 1000;
+      Serial.println("PIN_RESTART FIRED");
+      start_time = seconds();
+      display.clearDisplay();
+      display.display();
+      delay(100);
+      updateScreen();
   }
 
   // Rollover after 45 minutes
-  if (newval > 45) {
+  if (newval > 45ul) {
     newval = 5;
   }
 
@@ -143,7 +152,7 @@ void loop() {
     updateScreen();
   }
 
-  if (seconds() > start_time + ((long int)val) * 60) {
+  if (seconds() > start_time + ((time)val) * 60ul) {
     endOfMeditation();
   } else {
     startOfMeditation();
