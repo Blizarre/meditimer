@@ -1,24 +1,10 @@
-#include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
-
-#define SCREEN_WIDTH 128 // OLED display width, in pixels
-#define SCREEN_HEIGHT 32 // OLED display height, in pixels
-
-// Declaration for an SSD1306 display connected to I2C (SDA, SCL pins)
-// The pins for I2C are defined by the Wire-library.
-// On an arduino UNO:       A4(SDA), A5(SCL)
-// On an arduino MEGA 2560: 20(SDA), 21(SCL)
-// On an arduino LEONARDO:   2(SDA),  3(SCL), ...
-#define OLED_RESET     -1 // Reset pin # (or -1 if sharing Arduino reset pin)
-#define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+#include "TM1637Display.h"
 
 int PIN_INCTIME = 3;
 int PIN_RESTART = 2;
 unsigned int DEBOUNCE_COUNT = 2000;
 
-unsigned char val = 5;
+unsigned char timer_duration = 5;
 unsigned int acc_addtime = 0;
 unsigned int acc_restart = 0;
 
@@ -27,30 +13,151 @@ typedef unsigned long int time;
 time start_time = 0;
 bool meditationEnded = true;
 
+
+class SingleLED {
+  u8 pwm_value;
+  u8 pin_negative;
+  u8 pin_positive;
+  bool current_value;
+
+  public:
+
+  SingleLED(u8 pwm_value, u8 pin_positive, u8 pin_negative) {
+    this->pwm_value = pwm_value;
+    this->pin_negative = pin_negative;
+    this->pin_positive = pin_positive;
+    this->current_value = false;
+  }
+
+  void setup() {
+    pinMode(this->pin_positive, OUTPUT);
+    pinMode(this->pin_negative, OUTPUT);
+    digitalWrite(this->pin_positive, 0);
+    digitalWrite(this->pin_negative, 0);
+  }
+
+  void on() {
+    if (this->current_value == false) {
+      Serial.println(F("[SingleLED] Turning on"));
+      analogWrite(this->pin_positive, this->pwm_value);
+      this->current_value = true;
+    }
+  }
+
+  void off() {
+    if (this->current_value == true) {
+      Serial.println(F("[SingleLED] Turning off"));
+      digitalWrite(this->pin_positive, 0);
+      this->current_value = false;
+    }
+  }
+};
+
+
+class DisplayNumbers {
+private:
+  enum DisplayType {
+    None,
+    Value,
+    Done,
+  };
+
+  const uint8_t SEG_DONE[4] = {
+    SEG_B | SEG_C | SEG_D | SEG_E | SEG_G,           // d
+    SEG_A | SEG_B | SEG_C | SEG_D | SEG_E | SEG_F,   // O
+    SEG_C | SEG_E | SEG_G,                           // n
+    SEG_A | SEG_D | SEG_E | SEG_F | SEG_G            // E
+    };
+
+  int value;
+  TM1637Display* display;
+  DisplayType type;
+
+  void refresh() {
+    if (this->display == nullptr) {
+      Serial.println(F("[DisplayNumbers] Display unavailable, ignoring refresh"));
+      return;
+    }
+
+    switch(this->type) {
+      case None:
+        this->display->clear();
+        break;
+      case Done:
+        this->display->setSegments(SEG_DONE);
+        break;
+      case Value:
+        display->showNumberDec(this->value);
+        break;
+      default:
+        Serial.println(F("ERROR: DisplayNumbers] Unknown display type"));
+        Serial.println(this->type);
+    }
+  }
+public:
+
+  DisplayNumbers(u8 dio_pin, u8 clk_pin) {
+    this->display = new TM1637Display(clk_pin, dio_pin);
+    this->value = 0;
+    this->type = None;
+  }
+
+  ~DisplayNumbers() {
+    delete(this->display);
+  }
+
+  void setup() {
+    Serial.println(F("[DisplayNumbers] Setup"));
+    this->display->setBrightness(0);
+    refresh();
+  }
+
+  void displayValue(int value) {
+    if (this->type != Value || this->value != value) {
+      Serial.println(F("[DisplayNumbers] -> Value"));
+      Serial.println(value);
+      this->type = Value;
+      this->value = value;
+      this->refresh();
+    }
+  }
+
+  void displayDone() {
+    if (this->type != Done) {
+      Serial.println(F("[DisplayNumbers] -> DONE"));
+      this->type = Done;
+      this->refresh();
+    }
+  }
+
+  void displayNothing() {
+    if (this->type != None) {
+      Serial.println(F("[DisplayNumbers] -> None"));
+      this->type = None;
+      this->refresh();
+    }
+  }
+
+};
+
+
+SingleLED endOfMeditationLed = SingleLED(8, 5, 6);
+DisplayNumbers numbers = DisplayNumbers(8, 9);
+
+
 void setup() {
   Serial.begin(115200);
   Serial.println(F("Meditimer Startup"));
 
-  // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
-  if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
-    Serial.println(F("SSD1306 allocation failed"));
-    for (;;); // Don't proceed, loop forever
-  }
-
   pinMode(PIN_INCTIME, INPUT_PULLUP);
   pinMode(PIN_RESTART, INPUT_PULLUP);
 
-  // Clear the buffer
-  display.clearDisplay();
-  display.display();
-
-  display.setTextSize(2);      // Normal 1:1 pixel scale
-  display.setTextColor(SSD1306_WHITE, SSD1306_BLACK); // Draw white text
-  display.cp437(true);         // Use full 256 char 'Code Page 437' font
+  endOfMeditationLed.setup();
+  numbers.setup();
 
   start_time = seconds();
-  updateScreen();
 
+  Serial.println(F("Meditimer Loop"));
   while (true) {
     loop();
   }
@@ -60,46 +167,31 @@ time seconds() {
   return millis() / 1000;
 }
 
-void updateScreen() {
-  display.clearDisplay();
-  display.setCursor(0, 0);     // Start at top-left corner
-  display.write('0' + (val / 100) % 10);
-  display.write('0' + (val / 10 ) % 10) ;
-  display.write('0' + (val      ) % 10);
-
-  display.setCursor(50, 0);
+void refreshScreen() {
   if (meditationEnded) {
-    display.write("END  ");
+    endOfMeditationLed.on();
+    numbers.displayDone();
   } else {
-    display.write("START");
+    endOfMeditationLed.off();
+    numbers.displayValue(timer_duration);
   }
-
-  display.display();
 }
 
 void flashScreen() {
-    display.fillRect(0, 0, display.width(), display.height(), SSD1306_WHITE);
-    display.display();
-
-    delay(300);
-
-    display.clearDisplay();
-    display.display();
-
-    delay(200);
-
-    display.fillRect(0, 0, display.width(), display.height(), SSD1306_WHITE);
-    display.display();
-    delay(300);
-
-    display.clearDisplay();
-    display.display();
+  endOfMeditationLed.off();
+  numbers.displayNothing();
+  delay(100);
+  endOfMeditationLed.on();
+  numbers.displayValue(8888);
+  delay(300);
+  numbers.displayNothing();
+  endOfMeditationLed.off();
+  refreshScreen();
 }
 
 void startOfMeditation() {
   if (meditationEnded) {
     meditationEnded = false;
-    updateScreen();
   }
 }
 
@@ -107,7 +199,6 @@ void endOfMeditation() {
   if (! meditationEnded) {
     meditationEnded = true;
     flashScreen();
-    updateScreen();
   }
 }
 
@@ -127,35 +218,28 @@ bool debounce(uint8_t pin, unsigned int &acc) {
 }
 
 void loop() {
-  unsigned char newval = val;
   if (debounce(PIN_INCTIME, acc_addtime)) {
-      Serial.println("PIN_INCTIME FIRED");
-      newval += 5;
+      Serial.println("[Loop] Increase time");
+      timer_duration += 5;
   }
 
   if(debounce(PIN_RESTART, acc_restart)) {
-      Serial.println("PIN_RESTART FIRED");
+      Serial.println("[Loop] Restart timer");
       start_time = seconds();
-      display.clearDisplay();
-      display.display();
-      delay(100);
-      updateScreen();
+      flashScreen();
   }
 
   // Rollover after 45 minutes
-  if (newval > 45ul) {
-    newval = 5;
+  if (timer_duration > 45ul) {
+    timer_duration = 5;
   }
 
-  if (newval != val) {
-    val = newval;
-    updateScreen();
-  }
-
-  if (seconds() > start_time + ((time)val) * 60ul) {
+  if (seconds() > start_time + ((time)timer_duration) * 60ul) {
     endOfMeditation();
   } else {
     startOfMeditation();
   }
+
+  refreshScreen();
 
 }
